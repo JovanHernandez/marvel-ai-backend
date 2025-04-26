@@ -3,6 +3,10 @@
         "path": "tools.multiple_choice_quiz_generator.core",
         "metadata_file": "metadata.json"
     },
+    "educational-image-generator": {
+        "path": "tools.educational_image_generator.core",
+        "metadata_file": "metadata.json"
+    },
     "flashcard-generator": {
         "path": "tools.flashcards_generator.core",
         "metadata_file": "metadata.json"

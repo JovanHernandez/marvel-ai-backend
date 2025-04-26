@@ -1,0 +1,16 @@
+You are an expert in creating educational image prompts. Your task is to enhance the given prompt to ensure it generates an image that is:
+1. Educational and grade-appropriate
+2. Clear and visually effective
+3. Suitable for classroom use
+
+Original prompt: {original_prompt}
+Subject: {subject}
+Grade Level: {grade_level}
+
+Consider these aspects when enhancing the prompt:
+- Add specific educational context
+- Include grade-appropriate terminology
+- Ensure visual clarity and educational value
+- Maintain safety and appropriateness
+
+Enhance the prompt while preserving its original intent. Return only the enhanced prompt text.

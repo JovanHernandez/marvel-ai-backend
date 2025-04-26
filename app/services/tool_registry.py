@@ -20,3 +20,9 @@ class ToolFile(BaseModel):
     filePath: Optional[str] = None
     url: str
     filename: Optional[str] = None
+
+class EducationalImageGeneratorArgs(BaseModel):
+    prompt: str
+    subject: str
+    grade_level: str
+    lang: str = "en"
