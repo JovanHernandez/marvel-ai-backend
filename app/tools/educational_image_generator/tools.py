@@ -1,12 +1,24 @@
+from datetime import datetime
+import re
 from typing import Dict, Optional
+import uuid
 from pydantic import BaseModel, Field
 from langchain_core.prompts import PromptTemplate
-from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAI
+from langchain_google_genai import GoogleGenerativeAI
 from app.services.logger import setup_logger
 import os
-import base64
-from io import BytesIO
-from langchain_core.messages import HumanMessage
+import google.generativeai as genai
+import vertexai
+from vertexai.preview.vision_models import ImageGenerationModel
+
+
+# Import Google Cloud Storage libraries
+try:
+    from google.cloud import storage
+    from google.oauth2 import service_account
+    GCP_AVAILABLE = True
+except ImportError:
+    GCP_AVAILABLE = False
 
 logger = setup_logger(__name__)
 
@@ -20,8 +32,32 @@ class ImageGenerator:
     def __init__(
             self,
             verbose: bool = False,
+            project_id: Optional[str] = None,
+            storage_bucket: Optional[str] = None,
     ):
         self.verbose = verbose
+        self.project_id = project_id or os.getenv('PROJECT_ID')
+        self.storage_bucket = storage_bucket or os.getenv('GCP_STORAGE_BUCKET')
+        
+        if not self.storage_bucket:
+            raise ValueError("GCP_STORAGE_BUCKET environment variable is not set")
+        
+        # Configure Google Generative AI with API key
+        api_key = os.getenv('GOOGLE_API_KEY')
+        if not api_key:
+            raise ValueError("GOOGLE_API_KEY environment variable is not set")
+            
+        genai.configure(api_key=api_key)
+        
+        # Initialize GCP Storage client
+        try:
+            self.storage_client = storage.Client()
+            logger.info("Successfully initialized GCP Storage client")
+        except Exception as e:
+            logger.error(f"Failed to initialize GCP Storage client: {e}")
+            raise
+        
+        # Initialize the Gemini model
         self.text_model = GoogleGenerativeAI(model="gemini-1.5-pro")
         
         # Read prompt template
@@ -84,28 +120,84 @@ class ImageGenerator:
             logger.error(f"Error during safety check: {str(e)}")
             raise
 
-    def generate_image(self, enhanced_prompt: str) -> str:
-        """
-        Placeholder for image generation - returns a hardcoded URL
-        
-        Args:
-            enhanced_prompt (str): The enhanced prompt for image generation
-        
-        Returns:
-            str: URL of the generated image
-        """
-        if self.verbose:
-            logger.info("Returning placeholder image URL")
-        
-        # Return a placeholder URL - replace with your desired default image URL
-        return "https://placeholder.com/educational-image.png"
+    def generate_image(self, enhanced_prompt: str, lang: str = "en") -> str:
+        """Generate image using Vertex AI's Imagen model and save to GCP bucket"""
+        try:
+            if self.verbose:
+                logger.info(f"Generating image for prompt: {enhanced_prompt}")
+            
+            # Initialize Vertex AI
+            vertexai.init(project=self.project_id, location="us-central1")
+            image_model = ImageGenerationModel.from_pretrained("imagen-3.0-generate-002")
+            logger.info("Generating image using Vertex AI's imagen-3.0-generate-002")
 
-def generate_educational_image(prompt: str, subject: str, grade_level: str, lang: str = "en", verbose: bool = False) -> Dict:
+            image_response = image_model.generate_images(
+                prompt=enhanced_prompt,
+                number_of_images=1,
+                aspect_ratio="1:1",
+                safety_filter_level="block_only_high",
+                person_generation="allow_adult",
+            )
+            
+            if not image_response:
+                raise ValueError("No response received from the model")
+            
+            first_response = image_response[0]
+            
+            # Upload to GCP bucket
+            gcp_url = self.upload_to_gcp_bucket(first_response._image_bytes, enhanced_prompt)
+            if not gcp_url:
+                raise ValueError("Failed to upload image to GCP bucket")
+            
+            logger.info(f"Successfully uploaded image to GCP bucket: {gcp_url}")
+            return gcp_url
+        
+        except Exception as e:
+            logger.error(f"Error generating image: {str(e)}")
+            raise
+
+    def upload_to_gcp_bucket(self, image_data: bytes, prompt: str) -> Optional[str]:
+        """Upload an image to a GCP bucket and return the public URL."""
+        if not GCP_AVAILABLE or not self.storage_client or not self.storage_bucket:
+            if self.verbose:
+                logger.info("GCP Storage not available or not configured, skipping upload")
+            return None
+
+        try:
+            # Create filename
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            unique_id = str(uuid.uuid4())[:8]
+            sanitized_prompt = re.sub(r'[^\w\s-]', '', prompt)[:30].strip().replace(' ', '_')
+            filename = f"image_{timestamp}_{sanitized_prompt}_{unique_id}.png"
+
+            # Upload image data to bucket
+            bucket = self.storage_client.bucket(self.storage_bucket)
+            blob = bucket.blob(f"generated_images/{filename}")
+            blob.upload_from_string(image_data, content_type="image/png")
+
+            public_url = blob.public_url
+            if self.verbose:
+                logger.info(f"Image uploaded to GCP bucket: {public_url}")
+
+            return public_url
+
+        except Exception as e:
+            logger.error(f"Error uploading image to GCP bucket: {e}")
+            return None
+        
+def generate_educational_image(
+    prompt: str, 
+    subject: str, 
+    grade_level: str, 
+    project_id: str,
+    lang: str = "en", 
+    verbose: bool = False
+) -> Dict:
     """Main function to generate educational images"""
     if verbose:
         logger.info(f"Generating educational image for prompt: {prompt}")
 
-    generator = ImageGenerator(verbose=verbose)
+    generator = ImageGenerator(verbose=verbose, project_id=project_id)
     
     logger.info(f"Prompt: {prompt}")
     # Safety check
@@ -120,7 +212,7 @@ def generate_educational_image(prompt: str, subject: str, grade_level: str, lang
     logger.info(f"Enhanced Prompt: {enhanced_prompt}")
 
     # Generate image
-    image_url = generator.generate_image(enhanced_prompt)
+    image_url = generator.generate_image(enhanced_prompt, lang)
 
     output = ImageGenerationOutput(
         image_url=image_url,
@@ -135,6 +227,27 @@ def generate_educational_image(prompt: str, subject: str, grade_level: str, lang
     )
     
     return dict(output)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
